@@ -1,0 +1,42 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Environment variables and API keys
+.env
+
+# Temporary directories
+tmp_whisper_*/
+
+# Input and output directories (optional, uncomment if you don't want to include these)
+input/
+output/
+
+# モジュラー版の試作コード
+modular/
+
+# Archive folder
+archive/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+GITHUB_PUBLICATION.md
