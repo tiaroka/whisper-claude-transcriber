@@ -6,7 +6,7 @@
 
 このプログラムは、録音ファイルから文字起こしを生成します。具体的には、以下の2つの工程により構成されています。
 1. 音源変換: 録音ファイルを文字起こしに適したフォーマットに変換する処理。
-2. 音声からテキストへの変換: OpenAIのWhisperを利用して、音声をテキストに変換します。
+2. 音声からテキストへの変換: OpenAIのgpt-4o-transcribeを利用して、音声をテキストに変換します。
 
 作業環境:
 - 作業フォルダ: Google Colab環境ではGoogle Drive上のフォルダ、ローカル環境ではローカルフォルダを使用します。
@@ -512,7 +512,7 @@ def process_files_with_claude(input_directory, output_directory, output_prefix):
                         text_content = file.read()
 
                 response = client.messages.create(
-                    model="claude-3-opus-20240229",
+                    model="claude-opus-4-20250514",
                     max_tokens=4096,
                     temperature=0.0,
                     system=system_prompt,
@@ -573,6 +573,150 @@ def aggregate_timestamps(text, segment_size=3):
             result.append(cleaned_content)
     
     return '\n'.join(result)
+
+def create_unified_transcript_with_claude(input_directory, output_prefix):
+    """
+    Claudeを使用して分割されたファイルを重複除去しながら統合し、
+    最終的な一つの完全な文字起こしファイルを生成します。
+    """
+    anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not anthropic_api_key:
+        raise ValueError("ANTHROPIC_API_KEY環境変数が設定されていません")
+
+    client = anthropic.Anthropic(api_key=anthropic_api_key)
+    
+    # corrected_プレフィックスのファイルを取得
+    all_files = [f for f in os.listdir(input_directory) if f.startswith(output_prefix)]
+    
+    if not all_files:
+        print(f"統合対象のファイルが見つかりません（プレフィックス: {output_prefix}）")
+        return
+    
+    # ファイルをベース名でグループ化
+    file_groups = {}
+    for filename in all_files:
+        # corrected_audio_1_part_1.txt -> audio_1
+        match = re.match(rf'{output_prefix}(.+?)_part_\d+\.txt', filename)
+        if match:
+            base_name = match.group(1)
+            if base_name not in file_groups:
+                file_groups[base_name] = []
+            file_groups[base_name].append(filename)
+    
+    print(f"統合対象のグループ数: {len(file_groups)}")
+    
+    # 各グループを統合処理
+    for base_name, files in file_groups.items():
+        if len(files) <= 1:
+            print(f"スキップ: {base_name} (パートファイルが1つ以下)")
+            continue
+            
+        # ファイルを順序でソート
+        files.sort(key=natural_sort_key)
+        
+        print(f"統合処理中: {base_name} ({len(files)}個のパートファイル)")
+        
+        # 全パートファイルの内容を読み込み
+        all_content = []
+        for filename in files:
+            file_path = os.path.join(input_directory, filename)
+            
+            # エンコーディング検出
+            with open(file_path, "rb") as f:
+                raw_data = f.read()
+                result = chardet.detect(raw_data)
+                encoding = result['encoding']
+            
+            try:
+                with open(file_path, "r", encoding=encoding) as f:
+                    content = f.read().strip()
+                    all_content.append(f"=== パート{files.index(filename) + 1} ===\n{content}")
+            except UnicodeDecodeError:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read().strip()
+                    all_content.append(f"=== パート{files.index(filename) + 1} ===\n{content}")
+        
+        # Claudeに重複除去と統合を依頼
+        combined_content = "\n\n".join(all_content)
+        
+        system_prompt = """あなたは音声文字起こしの統合・編集の専門家です。分割された音声ファイルから生成された複数の文字起こしテキストを、一つの流暢で自然な文書に統合する作業を行います。
+
+## あなたの役割と責任
+
+1. **重複検出と除去の専門家**
+   - 音声分割時の5秒オーバーラップにより生成された重複部分を正確に特定
+   - 重複している発言や文章を自然に除去
+   - 文脈の流れを損なわないよう慎重に境界を判断
+
+2. **文字起こし統合の専門家**
+   - 複数パートの内容を時系列順に正確に結合
+   - 話者の発言の連続性と自然さを保持
+   - タイムスタンプの整合性を維持
+
+## 具体的な作業手順
+
+### ステップ1: 重複部分の特定
+- 各パートの終端（最後の1-2分）と次のパートの冒頭（最初の1-2分）を比較
+- 同一または類似の発言、文章、単語の繰り返しを特定
+- 話者の口調、内容、文脈から重複範囲を正確に判断
+
+### ステップ2: 自然な境界の決定
+- 重複部分の中で最も自然な切断点を選択
+- 発言の途中で切らず、文や段落の区切りで分割
+- 話の流れが継続するよう境界を調整
+
+### ステップ3: シームレスな統合
+- 重複部分を除去した各パートを滑らかに接続
+- タイムスタンプは適切な間隔で配置（重複部分のタイムスタンプは調整）
+- 文書全体として自然な読み流れを確保
+
+## 絶対に守るべき原則
+
+- **完全性の保持**: 重複以外の内容は一言一句削除しない
+- **正確性の維持**: 話者の発言内容を改変、要約、省略しない
+- **時系列の保持**: 発言の順序を変更しない
+- **話者の特徴保持**: 口調、言い回し、話し方の特徴をそのまま維持
+
+## 出力形式
+
+最終的な文字起こしは以下の形式で出力してください：
+- パートの区切り表示は削除
+- 自然な段落構成
+- 適切な間隔でのタイムスタンプ配置
+- 一つの連続した文書として読めるレイアウト
+
+## 注意事項
+
+- 重複が不明確な場合は、内容を削除せずそのまま保持
+- 技術的な内容や専門用語は正確に保持
+- 数値、固有名詞、重要な情報は絶対に改変しない
+
+あなたの作業により、元の音声の内容が完全に保持されつつ、読みやすく統合された最終的な文字起こし文書が完成します。"""
+        
+        try:
+            response = client.messages.create(
+                model="claude-opus-4-20250514",
+                max_tokens=8192,
+                temperature=0.0,
+                system=system_prompt,
+                messages=[
+                    {"role": "user", "content": f"以下の分割された音声文字起こしを統合してください。各パートは音声分割時に5秒のオーバーラップを持っているため、重複部分があります。重複を除去し、一つの自然な文字起こし文書として統合してください：\n\n{combined_content}"}
+                ]
+            )
+            
+            unified_text = "".join(block.text for block in response.content)
+            
+            # 統合ファイルを保存
+            output_filename = f"unified_{base_name}.txt"
+            output_path = os.path.join(input_directory, output_filename)
+            
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(unified_text)
+            
+            print(f"✓ 統合完了: {output_filename}")
+            
+        except Exception as e:
+            print(f"✗ 統合エラー ({base_name}): {str(e)}")
 
 def concatenate_split_files(input_directory, new_prefix, prefix):
     """
@@ -658,8 +802,8 @@ def run_audio_conversion():
         print(f"エンコードされたファイルは {temp_directory} に保存されています。")
         
         # 音声ファイルの分割
-        segment_length_ms = 25 * 60 * 1000  # 25分
-        overlap_ms = 30 * 1000  # 30秒
+        segment_length_ms = 20 * 60 * 1000  # 20分（Whisper API制限対応）
+        overlap_ms = 5 * 1000  # 5秒オーバーラップ
         
         process_audio_files(temp_directory, segment_length_ms, overlap_ms)
         print("全ての分割ファイルの処理が完了しました。")
@@ -749,10 +893,11 @@ def main():
         print("1. 音声ファイルのエンコードと分割")
         print("2. 音声からテキストへの変換")
         print("3. Claudeによる文字起こし後処理")
-        print("4. 全ての処理を順番に実行")
+        print("4. 重複除去による最終統合")
+        print("5. 全ての処理を順番に実行")
         print("0. 終了")
         
-        choice = input("選択 (0-4): ")
+        choice = input("選択 (0-5): ")
         
         if choice == "1":
             run_audio_conversion()
@@ -761,6 +906,9 @@ def main():
         elif choice == "3":
             run_post_processing()
         elif choice == "4":
+            print("=== 重複除去による最終統合を開始します ===")
+            create_unified_transcript_with_claude(base_output_dir, "corrected_")
+        elif choice == "5":
             run_audio_conversion()
             run_transcription()
             run_post_processing()
