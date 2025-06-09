@@ -1,0 +1,14 @@
+{
+  "language": "ja",
+  "segment_length_minutes": 20,
+  "overlap_seconds": 5,
+  "max_workers": 8,
+  "transcription_workers": 4,
+  "claude_model": "claude-opus-4-20250514",
+  "claude_batch_size": 10,
+  "claude_temperature": 0.0,
+  "similarity_threshold": 0.75,
+  "min_segment_length": 20,
+  "auto_cleanup": true,
+  "verbose_output": true
+}

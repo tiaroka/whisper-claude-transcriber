@@ -40,3 +40,6 @@ archive/
 Thumbs.db
 
 GITHUB_PUBLICATION.md
+
+TEST_GUIDE.md
+test_basic.py
